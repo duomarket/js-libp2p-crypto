@@ -4,6 +4,8 @@ const nodeify = require('nodeify')
 const Buffer = require('safe-buffer').Buffer
 
 const crypto = require('./webcrypto')()
+const nCrypto = self.nCrypto
+// const nCrypto = require('native-crypto')
 const lengths = require('./hmac-lengths')
 
 const hashTypes = {
@@ -14,26 +16,36 @@ const hashTypes = {
 
 exports.create = function (hashType, secret, callback) {
   const hash = hashTypes[hashType]
-
-  nodeify(crypto.subtle.importKey(
-    'raw',
-    secret,
-    {
-      name: 'HMAC',
-      hash: {name: hash}
-    },
-    false,
-    ['sign']
-  ).then((key) => {
-    return {
+  if (nCrypto) {
+    callback(null, {
       digest (data, cb) {
-        nodeify(crypto.subtle.sign(
-          {name: 'HMAC'},
-          key,
-          data
-        ).then((raw) => Buffer.from(raw)), cb)
+        const hmac = new nCrypto.Hmac(hash.toLowerCase(), secret);
+        nodeify(hmac.update(data).digest(), cb)
       },
       length: lengths[hashType]
-    }
-  }), callback)
+    })
+  } else {
+    nodeify(crypto.subtle.importKey(
+      'raw',
+      secret,
+      {
+        name: 'HMAC',
+        hash: {name: hash}
+      },
+      false,
+      ['sign']
+    ).then((key) => {
+      return {
+        digest (data, cb) {
+          nodeify(crypto.subtle.sign(
+            {name: 'HMAC'},
+            key,
+            data
+          ).then((raw) => Buffer.from(raw)), cb)
+        },
+        length: lengths[hashType]
+      }
+    }), callback)
+  }
+
 }

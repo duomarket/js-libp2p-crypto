@@ -1,6 +1,7 @@
 'use strict'
 
 const crypto = require('./webcrypto')()
+var elliptic = self.elliptic
 const nodeify = require('nodeify')
 const BN = require('asn1.js').bignum
 const Buffer = require('safe-buffer').Buffer
@@ -15,7 +16,59 @@ const bits = {
   'P-521': 521
 }
 
+const curveMap = {
+  'P-256': 'p256',
+  'P-384': 'p384',
+  'P-521': 'p521'
+}
+
+function nCryptoGenerateEphmeralKeyPair(curveName, callback) {
+  if (!elliptic) {
+    throw(new Error('elliptic must exist in global namespace'))
+    // elliptic = require('elliptic')
+  }
+  const EC = elliptic.ec
+  const curve = curveMap[curveName]
+  if (!curve) {
+    throw new Error('unsupported curve passed')
+  }
+  const ec = new EC(curve)
+  const priv = ec.genKeyPair()
+
+  const genSharedKey = (theirPub, forcePrivate, cb) => {
+    if (typeof forcePrivate === 'function') {
+        cb = forcePrivate
+        forcePrivate = undefined
+    }
+    var a = unmarshalPublicKey(curveName, theirPub)
+    var bnobj = {
+      x: toBn(a.x),
+      y: toBn(a.y)
+    }
+    const pub = ec.keyFromPublic(bnobj)
+    var p = priv
+    if (forcePrivate) {
+      console.log(unmarshalPrivateKey(curveName, forcePrivate));
+      var privhex = Buffer.from(unmarshalPrivateKey(curveName, forcePrivate).d, 'base64').toString('hex')
+      p = ec.keyFromPrivate(privhex)
+    }
+    cb(null, p.derive(pub.getPublic()).toArrayLike(Buffer, 'be'))
+  }
+  var a = priv.getPublic()
+  var jwk = {}
+  jwk.x = a.getX()
+  jwk.y = a.getY()
+  jwk.crv = curveName
+  callback(null, {
+    key: marshalBNPublicKey(jwk),
+    genSharedKey
+  })
+}
+
 exports.generateEphmeralKeyPair = function (curve, callback) {
+  if (!crypto) {
+    return nCryptoGenerateEphmeralKeyPair(curve, callback)
+  }
   nodeify(crypto.subtle.generateKey(
     {
       name: 'ECDH',
@@ -101,6 +154,16 @@ function marshalPublicKey (jwk) {
     Buffer.from([4]), // uncompressed point
     toBn(jwk.x).toArrayLike(Buffer, 'be', byteLen),
     toBn(jwk.y).toArrayLike(Buffer, 'be', byteLen)
+  ], 1 + byteLen * 2)
+}
+
+function marshalBNPublicKey (jwk) {
+  const byteLen = curveLengths[jwk.crv]
+
+  return Buffer.concat([
+    Buffer.from([4]), // uncompressed point
+    jwk.x.toArrayLike(Buffer, 'be', byteLen),
+    jwk.y.toArrayLike(Buffer, 'be', byteLen)
   ], 1 + byteLen * 2)
 }
 

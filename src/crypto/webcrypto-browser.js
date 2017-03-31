@@ -20,5 +20,5 @@ module.exports = function getWebCrypto () {
     }
   }
 
-  throw new Error('Please use an environment with crypto support')
+  return false
 }
